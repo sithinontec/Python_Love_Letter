@@ -146,6 +146,10 @@ class LayoutMixin:
                                    fg=GOLD, wraplength=480, pady=8, padx=12)
         self.result_lbl.pack(fill="x", padx=4)
 
+        # Played card display — shows the card just played, hidden until a card is played
+        self.played_card_frame = tk.Frame(parent, bg=BG)
+        # (contents are created dynamically in _show_played_card; starts empty & hidden)
+
         # Next Turn button — appears after a card is played, hidden otherwise
         self.next_btn = tk.Button(
             parent, text="Next Turn →", font=FONT_BODY,

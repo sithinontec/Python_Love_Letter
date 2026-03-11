@@ -47,6 +47,22 @@ class GameScreen(LayoutMixin, RefreshMixin, tk.Frame):
     # ACTIONS
     # ═══════════════════════════════════════════════════════════════════════
 
+    def _show_played_card(self, card_id: int):
+        """Display the card just played above the Next Turn button."""
+        # Clear any previous card shown
+        for w in self.played_card_frame.winfo_children():
+            w.destroy()
+        tk.Label(self.played_card_frame, text="Card Played:",
+                 font=FONT_SMALL, bg=BG, fg=MUTED).pack()
+        CardWidget(self.played_card_frame, card_id, width=80, height=115).pack(pady=(4, 0))
+        self.played_card_frame.pack(pady=(4, 0))   # make it visible
+
+    def _hide_played_card(self):
+        """Hide the played card display (called at the start of each new turn)."""
+        self.played_card_frame.pack_forget()
+        for w in self.played_card_frame.winfo_children():
+            w.destroy()
+
     def _reveal_hand(self):
         """Player confirmed it's their turn — flip cards face-up."""
         self._hand_hidden = False
@@ -78,6 +94,22 @@ class GameScreen(LayoutMixin, RefreshMixin, tk.Frame):
                 text="You must play the Countess when holding the King or Prince!", fg=RED)
             return
 
+        # Snapshot baron/prince data BEFORE play_card modifies/clears hands
+        baron_snap  = None
+        prince_snap = None
+        if cid == 3 and target and not target.protected:
+            baron_snap = {
+                "attacker": cur,
+                "defender": target,
+                "atk_card": cur.hand[0] if cur.hand else None,
+                "def_card": target.hand[0] if target.hand else None,
+            }
+        if cid == 5 and target and not (target.protected and target is not cur):
+            prince_snap = {
+                "player":       target,
+                "discarded_id": target.hand[0] if target.hand else None,
+            }
+
         msg = g.play_card(cid, target, self._guard_guess if cid == 1 else 0)
         self.selected_card = None
         self._guard_guess  = 2
@@ -88,13 +120,23 @@ class GameScreen(LayoutMixin, RefreshMixin, tk.Frame):
             # Refresh sidebar + token bar BEFORE opening the popup so totals are current
             self._refresh_sidebar(g.current_player)
             self.tokens_bar.configure(text=self._token_str())
-            self._show_round_end()
+            if baron_snap:
+                self._baron_reveal(baron_snap, then=self._show_round_end)
+            elif prince_snap and prince_snap["discarded_id"]:
+                self._prince_discard_reveal(prince_snap, then=self._show_round_end)
+            else:
+                self._show_round_end()
         else:
             # Hide Play Card, show Next Turn in its place
             self.play_btn.pack_forget()
+            self._show_played_card(cid)
             self.next_btn.pack(pady=4)
-            if cid == 2 and target and not target.protected and "peeks" in msg:
-                self._priest_reveal(target)  # Priest: show target's card in a popup
+            if baron_snap:
+                self._baron_reveal(baron_snap)
+            elif prince_snap and prince_snap["discarded_id"]:
+                self._prince_discard_reveal(prince_snap)
+            elif cid == 2 and target and not target.protected and "peeks" in msg:
+                self._priest_reveal(target)
             else:
                 self._refresh_sidebar(g.current_player)
 
@@ -132,6 +174,7 @@ class GameScreen(LayoutMixin, RefreshMixin, tk.Frame):
     def _next_turn(self):
         """Commit the turn, hide the hand, advance the engine, refresh for next player."""
         self.next_btn.pack_forget()
+        self._hide_played_card()             # clear the played card before next player sees screen
         self.result_lbl.configure(text="")
         self.selected_card = None
         self.game.next_turn()
@@ -144,6 +187,128 @@ class GameScreen(LayoutMixin, RefreshMixin, tk.Frame):
     # ═══════════════════════════════════════════════════════════════════════
     # POPUPS
     # ═══════════════════════════════════════════════════════════════════════
+
+    def _baron_reveal(self, snap: dict, then=None):
+        """
+        Versus popup shown after Baron is played.
+        Shows both players' cards side-by-side, a VS divider, and the outcome.
+        `then` is an optional callback called when the popup closes (used when the
+        round ends immediately after the baron comparison).
+        """
+        atk, dfn  = snap["attacker"], snap["defender"]
+        atk_cid, dfn_cid = snap["atk_card"], snap["def_card"]
+
+        # Determine outcome text + highlight colours
+        if atk_cid is None or dfn_cid is None:
+            outcome, atk_col, dfn_col = "No comparison possible.", MUTED, MUTED
+        elif atk_cid > dfn_cid:
+            outcome = f"{dfn.name} is eliminated!"
+            atk_col, dfn_col = GOLD, RED
+        elif dfn_cid > atk_cid:
+            outcome = f"{atk.name} is eliminated!"
+            atk_col, dfn_col = RED, GOLD
+        else:
+            outcome = "It's a tie — nobody eliminated!"
+            atk_col = dfn_col = ACCENT
+
+        pop = tk.Toplevel(self)
+        pop.title("Baron — Card Comparison")
+        pop.configure(bg=BG)
+        pop.resizable(False, False)
+        pop.grab_set()
+        pop.geometry("480x380")
+
+        # ── Title ──────────────────────────────────────────────────────────
+        tk.Label(pop, text="⚔  Baron — Compare Hands",
+                 font=FONT_HEADER, bg=BG, fg=ACCENT).pack(pady=(20, 4))
+
+        # ── Versus row ─────────────────────────────────────────────────────
+        vs_row = tk.Frame(pop, bg=BG)
+        vs_row.pack(pady=10)
+
+        def player_col(parent, name, card_id, highlight):
+            """One column: player name + card widget."""
+            col = tk.Frame(parent, bg=BG)
+            col.pack(side="left", padx=20)
+            tk.Label(col, text=name, font=FONT_HEADER, bg=BG, fg=highlight).pack(pady=(0, 6))
+            if card_id:
+                CardWidget(col, card_id, width=90, height=130).pack()
+            return col
+
+        player_col(vs_row, atk.name, atk_cid, atk_col)
+
+        # VS divider
+        vs_mid = tk.Frame(vs_row, bg=BG)
+        vs_mid.pack(side="left", padx=10)
+        tk.Label(vs_mid, text="VS", font=("Georgia", 28, "bold italic"),
+                 bg=BG, fg=MUTED).pack(pady=30)
+
+        player_col(vs_row, dfn.name, dfn_cid, dfn_col)
+
+        # ── Outcome banner ─────────────────────────────────────────────────
+        banner_fg = RED if "eliminated" in outcome else GOLD
+        tk.Label(pop, text=outcome, font=FONT_HEADER, bg=BG, fg=banner_fg).pack(pady=(8, 4))
+
+        # ── Close button ───────────────────────────────────────────────────
+        def on_close():
+            pop.destroy()
+            if then:
+                then()
+
+        tk.Button(pop, text="Continue", font=FONT_BODY,
+                  bg=ACCENT, fg=BG, bd=0, padx=20, pady=6,
+                  cursor="hand2", command=on_close).pack(pady=12)
+
+    def _prince_discard_reveal(self, snap: dict, then=None):
+        """
+        Popup shown after Prince is played.
+        Displays the card the targeted player was forced to discard,
+        plus whether they drew a new card or were eliminated (Princess).
+        `then` fires after the popup closes (used when round ends immediately).
+        """
+        target     = snap["player"]
+        disc_id    = snap["discarded_id"]
+        eliminated = target.eliminated   # True if they discarded the Princess
+
+        pop = tk.Toplevel(self)
+        pop.title("Prince — Discard")
+        pop.configure(bg=BG)
+        pop.resizable(False, False)
+        pop.grab_set()
+        pop.geometry("340x360")
+
+        # ── Title ──────────────────────────────────────────────────────────
+        tk.Label(pop, text="👑  Prince — Forced Discard",
+                 font=FONT_HEADER, bg=BG, fg=ACCENT).pack(pady=(20, 4))
+        tk.Label(pop, text=f"{target.name} discards:",
+                 font=FONT_BODY, bg=BG, fg=MUTED).pack(pady=(0, 6))
+
+        # ── The discarded card ─────────────────────────────────────────────
+        CardWidget(pop, disc_id, width=100, height=145).pack()
+
+        # ── Outcome line ───────────────────────────────────────────────────
+        if eliminated:
+            outcome = f"☠  {target.name} discarded the Princess and is eliminated!"
+            out_fg  = RED
+        elif not target.hand:
+            outcome = f"{target.name} has no card to draw — hand stays empty."
+            out_fg  = MUTED
+        else:
+            outcome = f"{target.name} draws a new card."
+            out_fg  = GOLD
+
+        tk.Label(pop, text=outcome, font=FONT_BODY, bg=BG, fg=out_fg,
+                 wraplength=300, justify="center").pack(pady=(10, 4))
+
+        # ── Close button ───────────────────────────────────────────────────
+        def on_close():
+            pop.destroy()
+            if then:
+                then()
+
+        tk.Button(pop, text="Continue", font=FONT_BODY,
+                  bg=ACCENT, fg=BG, bd=0, padx=20, pady=6,
+                  cursor="hand2", command=on_close).pack(pady=10)
 
     def _priest_reveal(self, target: Player):
         """Small modal showing the target's card after a Priest is played."""
@@ -215,6 +380,7 @@ class GameScreen(LayoutMixin, RefreshMixin, tk.Frame):
     def _start_next_round(self):
         """Reset UI state and hand off to the game engine to start a new round."""
         self.next_btn.pack_forget()
+        self._hide_played_card()
         self.result_lbl.configure(text="")
         self.selected_card = None
         self.game.start_next_round()
