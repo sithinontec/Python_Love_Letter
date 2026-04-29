@@ -105,7 +105,7 @@ class ContinueScreen(tk.Frame):
 
         # Reconstruct progress from DB
         token_map      = self._db.get_session_token_totals(session_id)
-        last_round     = self._db.get_latest_round_num(session_id)
+        last_round     = self._db.get_latest_completed_round_num(session_id)
         next_round_num = last_round + 1                    # resume on next round
 
         # Token summary string e.g. "Alice ♥♥  Bob ♥"
