@@ -312,6 +312,22 @@ class GameDB:
         ).fetchone()
         return row["mx"] or 0
 
+    def get_latest_completed_round_num(self, session_id: int) -> int:
+        """
+        Return the highest completed round number for a session (0 if none).
+
+        This is the right value to use for the Continue flow because rounds are
+        created at round start. If the app closes mid-round, that unfinished
+        round should be replayed rather than skipped.
+        """
+        row = self._conn.execute(
+            """SELECT MAX(round_num) AS mx
+               FROM rounds
+               WHERE session_id = ? AND ended_at IS NOT NULL""",
+            (session_id,),
+        ).fetchone()
+        return row["mx"] or 0
+
     def abandon_session(self, session_id: int) -> None:
         """
         Mark a session as abandoned so it no longer appears in Continue.

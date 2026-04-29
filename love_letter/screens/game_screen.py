@@ -98,10 +98,11 @@ class GameScreen(LayoutMixin, RefreshMixin, tk.Frame):
         baron_snap  = None
         prince_snap = None
         if cid == 3 and target and not target.protected:
+            other = next((c for c in cur.hand if c != cid), cur.hand[0] if cur.hand else None)
             baron_snap = {
                 "attacker": cur,
                 "defender": target,
-                "atk_card": cur.hand[0] if cur.hand else None,
+                "atk_card": other,
                 "def_card": target.hand[0] if target.hand else None,
             }
         if cid == 5 and target and not (target.protected and target is not cur):
