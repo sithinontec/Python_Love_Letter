@@ -184,11 +184,87 @@ class RefreshMixin:
 
     # ── Log ───────────────────────────────────────────────────────────────────
 
+    # Colour tags are configured once the first time _update_log runs.
+    _log_tags_ready = False
+
+    def _configure_log_tags(self):
+        """Set up named colour/font tags on the log Text widget (once only)."""
+        t = self.log_text
+        t.tag_configure("round",     foreground=GOLD,   font=(FONT_HEADER[0], FONT_SMALL[1], "bold"))
+        t.tag_configure("eliminate", foreground=RED,    font=FONT_BODY)
+        t.tag_configure("win",       foreground=GOLD,   font=(FONT_HEADER[0], FONT_BODY[1], "bold"))
+        t.tag_configure("protect",   foreground=GREEN,  font=FONT_BODY)
+        t.tag_configure("action",    foreground=FG,     font=FONT_BODY)
+        t.tag_configure("muted",     foreground=MUTED,  font=FONT_SMALL)
+        t.tag_configure("divider",   foreground=BORDER, font=FONT_SMALL)
+        RefreshMixin._log_tags_ready = True
+
+    @staticmethod
+    def _classify_line(line: str) -> tuple:
+        """
+        Return (tag, display_line) for a raw log line.
+        Adds a short icon prefix so each entry is scannable at a glance.
+        """
+        lo = line.lower()
+
+        # Round header  ── Round N begins ──
+        if lo.startswith("──"):
+            inner = line.strip("─ \t")
+            return "round", f"━━  {inner}  ━━"
+
+        # Game / round winner
+        if "wins the game" in lo or "🏆" in lo:
+            text = line.replace("🏆", "").strip()
+            return "win", f"🏆  {text}"
+        if lo.startswith("round over"):
+            return "win", f"🎖  {line}"
+
+        # Eliminated
+        if "eliminated" in lo:
+            return "eliminate", f"💀  {line}"
+
+        # Countess forced-discard warning
+        if "must discard the countess" in lo:
+            return "eliminate", f"⚠️  {line}"
+
+        # Protection
+        if "protected" in lo or "handmaid" in lo:
+            return "protect", f"🛡  {line}"
+
+        # Card plays — one icon per card for quick scanning
+        icons = {
+            "guard":    "⚔️",
+            "priest":   "📖",
+            "baron":    "🗡️",
+            "prince":   "👑",
+            "king":     "🤴",
+            "countess": "💃",
+            "princess": "👸",
+        }
+        for keyword, icon in icons.items():
+            if f"plays {keyword}" in lo:
+                return "action", f"{icon}  {line}"
+
+        return "muted", f"   {line}"
+
     def _update_log(self):
-        """Rewrite the log panel from the game's event list (last 60 entries)."""
-        self.log_text.configure(state="normal")
-        self.log_text.delete(1.0, "end")
-        for line in self.game.log[-60:]:
-            self.log_text.insert("end", line + "\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
+        """Rewrite the log panel with colour-coded, icon-prefixed entries."""
+        t = self.log_text
+        if not RefreshMixin._log_tags_ready:
+            self._configure_log_tags()
+
+        t.configure(state="normal")
+        t.delete(1.0, "end")
+
+        entries = self.game.log[-60:]
+        for i, line in enumerate(entries):
+            tag, display = self._classify_line(line)
+
+            # Thin divider before each round header (except the very first)
+            if tag == "round" and i > 0:
+                t.insert("end", "─" * 28 + "\n", "divider")
+
+            t.insert("end", display + "\n", tag)
+
+        t.see("end")
+        t.configure(state="disabled")
